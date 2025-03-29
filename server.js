@@ -8,6 +8,19 @@ const PORT = 5001;
 // Activer CORS pour permettre les requêtes depuis le frontend
 app.use(cors());
 
+// Middleware pour limiter l'accès à localhost
+app.use((req, res, next) => {
+    const clientIp = req.ip; // Adresse IP du client
+    const allowedIps = ['127.0.0.1', '::1']; // IPs autorisées (IPv4 et IPv6 pour localhost)
+
+    if (!allowedIps.includes(clientIp)) {
+        console.error(`Accès refusé pour l'IP : ${clientIp}`);
+        return res.status(403).json({ error: 'Accès refusé. Cette API est limitée à localhost.' });
+    }
+
+    next(); // Passer au middleware suivant si l'IP est autorisée
+});
+
 // Ouvrir la base de données SQLite
 const db = new sqlite3.Database('./data/puzzles.db');
 
