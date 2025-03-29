@@ -1,83 +1,31 @@
-import express from 'express';
-import multer from 'multer';
-import { exec } from 'child_process';
-import Stockfish from 'stockfish';
-import fs from 'fs';
-import { Chess } from 'chess.js';
-import PDFDocument from 'pdfkit';
+const sqlite3 = require('sqlite3').verbose();
+const express = require('express');
+const cors = require('cors');
 
 const app = express();
-const port = 3000;
-const upload = multer({ dest: 'uploads/' });
+const PORT = 5001;
 
-// Stockfish Initialization
-const engine = Stockfish();
-engine.onmessage = (message) => console.log("Stockfish: ", message);
+// Activer CORS pour permettre les requêtes depuis le frontend
+app.use(cors());
 
-// Upload PGN & Analyze
-app.post('/analyze', upload.single('pgnFile'), async (req, res) => {
-    try {
-        const pgn = fs.readFileSync(req.file.path, 'utf8');
-        const chess = new Chess();
-        
-        if (!chess.load_pgn(pgn)) {
-            return res.status(400).json({ error: 'Invalid PGN file' });
+// Ouvrir la base de données SQLite
+const db = new sqlite3.Database('./data/puzzles.db');
+
+// Endpoint pour charger un problème d'échecs au hasard
+app.get('/problems', (req, res) => {
+    const query = 'SELECT * FROM puzzles ORDER BY RANDOM() LIMIT 1';
+
+    db.get(query, (err, row) => {
+        if (err) {
+            console.error('Erreur lors de la requête SQL :', err);
+            return res.status(500).json({ error: 'Erreur lors du chargement du problème.' });
         }
-        
-        // Analyze game with Stockfish
-        const analysisResults = await analyzeGame(chess);
-        
-        // Clean up uploaded file
-        fs.unlinkSync(req.file.path);
-        
-        res.json(analysisResults);
-    } catch (error) {
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
 
-// Function to analyze a game with Stockfish
-async function analyzeGame(chess) {
-    return new Promise((resolve) => {
-        const moves = chess.history();
-        let analysisResults = [];
-
-        function analyzeMove(index) {
-            if (index >= moves.length) {
-                return resolve(analysisResults);
-            }
-
-            const fen = chess.fen();
-            engine.postMessage(`position fen ${fen}`);
-            engine.postMessage('go depth 15');
-            
-            engine.onmessage = (message) => {
-                if (message.includes("bestmove")) {
-                    analysisResults.push({ move: moves[index], analysis: message });
-                    chess.move(moves[index]);
-                    analyzeMove(index + 1);
-                }
-            };
-        }
-        
-        analyzeMove(0);
+        res.json(row); // Envoyer le problème au client
     });
-}
-
-// Generate PDF Report
-app.get('/report/:id', (req, res) => {
-    const doc = new PDFDocument();
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'attachment; filename="report.pdf"');
-    
-    doc.text('Chess Analysis Report', { align: 'center' });
-    doc.moveDown();
-    doc.text('Details of the game analysis will be here...');
-    
-    doc.pipe(res);
-    doc.end();
 });
 
-app.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}`);
+// Démarrer le serveur
+app.listen(PORT, () => {
+    console.log(`Serveur backend démarré sur http://localhost:${PORT}`);
 });
