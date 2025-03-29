@@ -5,26 +5,29 @@ const cors = require('cors');
 const app = express();
 const PORT = 5001;
 
-// Activer CORS pour permettre les requêtes depuis le frontend
-app.use(cors());
+// Configuration de CORS
+const corsOptions = {
+    origin: (origin, callback) => {
+        // Liste blanche des domaines autorisés
+        const whitelist = [
+            'http://localhost:3000', // Frontend local
+            'http://127.0.0.1:3000', // Frontend local (IPv4)
+            'https://your-frontend-domain.com', // Frontend hébergé (à ajouter plus tard)
+        ];
 
-// Middleware pour limiter l'accès à localhost
-app.use((req, res, next) => {
-    let clientIp = req.ip; // Adresse IP du client
-    const allowedIps = ['127.0.0.1', '::1', '::ffff:127.0.0.1']; // IPs autorisées (IPv4, IPv6 et IPv4 encapsulée dans IPv6)
+        // Autoriser toutes les IP locales (192.168.x.x ou 10.x.x.x)
+        const localNetworkRegex = /^http:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}):\d+$/;
 
-    // Normaliser l'adresse IP pour gérer les formats IPv4 encapsulés dans IPv6
-    if (clientIp.startsWith('::ffff:')) {
-        clientIp = clientIp.replace('::ffff:', ''); // Convertir ::ffff:127.0.0.1 en 127.0.0.1
-    }
+        if (!origin || whitelist.includes(origin) || localNetworkRegex.test(origin)) {
+            callback(null, true); // Autoriser l'accès
+        } else {
+            callback(new Error('Accès refusé par CORS')); // Refuser l'accès
+        }
+    },
+};
 
-    if (!allowedIps.includes(clientIp)) {
-        console.error(`Accès refusé pour l'IP : ${clientIp}`);
-        return res.status(403).json({ error: 'Accès refusé. Cette API est limitée à localhost.' });
-    }
-
-    next(); // Passer au middleware suivant si l'IP est autorisée
-});
+// Activer CORS avec les options configurées
+app.use(cors(corsOptions));
 
 // Ouvrir la base de données SQLite
 const db = new sqlite3.Database('./data/puzzles.db');
