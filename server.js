@@ -10,8 +10,13 @@ app.use(cors());
 
 // Middleware pour limiter l'accès à localhost
 app.use((req, res, next) => {
-    const clientIp = req.ip; // Adresse IP du client
-    const allowedIps = ['127.0.0.1', '::1']; // IPs autorisées (IPv4 et IPv6 pour localhost)
+    let clientIp = req.ip; // Adresse IP du client
+    const allowedIps = ['127.0.0.1', '::1', '::ffff:127.0.0.1']; // IPs autorisées (IPv4, IPv6 et IPv4 encapsulée dans IPv6)
+
+    // Normaliser l'adresse IP pour gérer les formats IPv4 encapsulés dans IPv6
+    if (clientIp.startsWith('::ffff:')) {
+        clientIp = clientIp.replace('::ffff:', ''); // Convertir ::ffff:127.0.0.1 en 127.0.0.1
+    }
 
     if (!allowedIps.includes(clientIp)) {
         console.error(`Accès refusé pour l'IP : ${clientIp}`);
