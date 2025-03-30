@@ -12,7 +12,7 @@ const corsOptions = {
         const whitelist = [
             'http://localhost:3000', // Frontend local
             'http://127.0.0.1:3000', // Frontend local (IPv4)
-            'https://chesschool-front-production.up.railway.app', // Frontend hébergé (à ajouter plus tard)
+            'https://douwdy.github.io/', // Frontend hébergé (à ajouter plus tard)
         ];
 
         // Autoriser toutes les IP locales (192.168.x.x ou 10.x.x.x)
