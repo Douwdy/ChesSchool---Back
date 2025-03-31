@@ -2,3 +2,5 @@ node_modules
 data/lichess_db_puzzle.csv
 .DS_Store
 import_csv_to_sqlite.js
+output.txt
+test.js
