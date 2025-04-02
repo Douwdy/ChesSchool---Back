@@ -15,12 +15,27 @@ app.use(express.json());
 const morgan = require('morgan');
 app.use(morgan('dev')); // Ajouter ceci pour voir toutes les requêtes HTTP
 
-// Configuration de CORS simplifiée - accepter toutes les origines
+// Configuration CORS pour résoudre les problèmes avec PM2
 app.use(cors({
     origin: '*', // Accepter toutes les origines
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept'],
+    credentials: true
 }));
+
+// Gestion explicite des préflight requests
+app.options('*', cors());
+
+// Headers explicites pour s'assurer que CORS fonctionne correctement
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+    next();
+});
 
 // Ouvrir la base de données SQLite
 const db = new sqlite3.Database('./data/puzzles.db');
