@@ -2,6 +2,9 @@ const sqlite3 = require('sqlite3').verbose();
 const express = require('express');
 const cors = require('cors');
 const chessEngine = require('./services/chessEngine');
+const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = 5001;
@@ -202,7 +205,44 @@ process.on('SIGINT', () => {
     process.exit(0);
 });
 
-// Démarrer le serveur
-app.listen(PORT, () => {
-    console.log(`Serveur backend démarré sur http://localhost:${PORT}`);
-});
+// Ajout du serveur HTTPS
+try {
+    // Tentative d'utilisation des certificats Let's Encrypt sur le VPS
+    let privateKey, certificate, ca;
+    
+    try {
+        // D'abord essayer le chemin sur le serveur VPS
+        privateKey = fs.readFileSync('/etc/letsencrypt/live/slashend.fr/privkey.pem', 'utf8');
+        certificate = fs.readFileSync('/etc/letsencrypt/live/slashend.fr/cert.pem', 'utf8');
+        ca = fs.readFileSync('/etc/letsencrypt/live/slashend.fr/chain.pem', 'utf8');
+        console.log("Certificats chargés depuis le chemin du serveur VPS");
+    } catch (e) {
+        // Si ça échoue, utiliser le chemin local dans le dossier du projet
+        privateKey = fs.readFileSync(path.join(__dirname, 'ssl/privkey.pem'), 'utf8');
+        certificate = fs.readFileSync(path.join(__dirname, 'ssl/cert.pem'), 'utf8');
+        ca = fs.readFileSync(path.join(__dirname, 'ssl/chain.pem'), 'utf8');
+        console.log("Certificats chargés depuis le dossier local ssl/");
+    }
+
+    const credentials = {
+        key: privateKey,
+        cert: certificate,
+        ca: ca
+    };
+
+    // Créer serveur HTTPS
+    const httpsServer = https.createServer(credentials, app);
+
+    // Démarrer le serveur HTTPS
+    httpsServer.listen(PORT, () => {
+        console.log(`Serveur backend démarré sur https://slashend.fr:${PORT}`);
+    });
+} catch (error) {
+    console.error("Impossible de démarrer le serveur HTTPS:", error);
+    console.log("Démarrage du serveur HTTP uniquement...");
+    
+    // Démarrer le serveur HTTP comme fallback
+    app.listen(PORT, () => {
+        console.log(`Serveur backend démarré sur http://localhost:${PORT}`);
+    });
+}
