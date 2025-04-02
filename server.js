@@ -18,7 +18,9 @@ const corsOptions = {
         // Liste blanche des domaines autorisés
         const whitelist = [
             'http://localhost:3000', // Frontend local
-            'http://127.0.0.1:3000' // Frontend local (IPv4)
+            'http://127.0.0.1:3000', // Frontend local (IPv4)
+            'http://chess.slashend.fr', // Frontend en ligne
+            'https://chess.slashend.fr', // Frontend en ligne (HTTPS)
         ];
 
         // Autoriser toutes les IP locales (192.168.x.x ou 10.x.x.x)
