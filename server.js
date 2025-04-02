@@ -12,30 +12,12 @@ app.use(express.json());
 const morgan = require('morgan');
 app.use(morgan('dev')); // Ajouter ceci pour voir toutes les requêtes HTTP
 
-// Configuration de CORS
-const corsOptions = {
-    origin: (origin, callback) => {
-        // Liste blanche des domaines autorisés
-        const whitelist = [
-            'http://localhost:3000', // Frontend local
-            'http://127.0.0.1:3000', // Frontend local (IPv4)
-            'http://chess.slashend.fr', // Frontend en ligne
-            'https://chess.slashend.fr', // Frontend en ligne (HTTPS)
-        ];
-
-        // Autoriser toutes les IP locales (192.168.x.x ou 10.x.x.x)
-        const localNetworkRegex = /^http:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}):\d+$/;
-
-        if (!origin || whitelist.includes(origin) || localNetworkRegex.test(origin)) {
-            callback(null, true); // Autoriser l'accès
-        } else {
-            callback(new Error('Accès refusé par CORS')); // Refuser l'accès
-        }
-    },
-};
-
-// Activer CORS avec les options configurées
-app.use(cors(corsOptions));
+// Configuration de CORS simplifiée - accepter toutes les origines
+app.use(cors({
+    origin: '*', // Accepter toutes les origines
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
 
 // Ouvrir la base de données SQLite
 const db = new sqlite3.Database('./data/puzzles.db');
