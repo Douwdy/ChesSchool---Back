@@ -15,26 +15,42 @@ app.use(express.json());
 const morgan = require('morgan');
 app.use(morgan('dev')); // Ajouter ceci pour voir toutes les requêtes HTTP
 
-// Configuration CORS pour résoudre les problèmes avec PM2
-app.use(cors({
-    origin: '*', // Accepter toutes les origines
+// Configuration CORS de base
+const corsOptions = {
+    origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept'],
-    credentials: true
-}));
+    credentials: true,
+    preflightContinue: false,
+    optionsSuccessStatus: 204
+};
 
-// Gestion explicite des préflight requests
-app.options('*', cors());
+app.use(cors(corsOptions));
 
-// Headers explicites pour s'assurer que CORS fonctionne correctement
-app.use((req, res, next) => {
+// Gestion explicite des préflight requests pour toutes les routes
+app.options('*', cors(corsOptions));
+
+// Configuration CORS spécifique pour les routes /api
+app.use('/api', (req, res, next) => {
+    // Loguer les requêtes API pour débogage
+    console.log(`API Request: ${req.method} ${req.path}`);
+    
+    // Headers CORS explicites pour les routes API
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Origin, Accept');
+    
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
+    
     next();
+});
+
+const apiRoutes = ['/api/analyze', '/api/analyze-game', '/api/analysis-status', '/api/engine-health'];
+
+apiRoutes.forEach(route => {
+    app.options(route, cors(corsOptions));
 });
 
 // Ouvrir la base de données SQLite
