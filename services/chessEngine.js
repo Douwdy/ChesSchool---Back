@@ -3,7 +3,6 @@ const { Chess } = require('chess.js');
 const path = require('path');
 const fs = require('fs');
 
-// Ajouter un watchdog pour surveiller l'état du moteur
 class ChessEngine {
   constructor() {
     this.process = null;
@@ -19,64 +18,52 @@ class ChessEngine {
 
   initialize() {
     if (this.process) {
-      // Arrêter le processus existant avant d'en créer un nouveau
       this.shutDown();
     }
 
     try {
-      // Chemin du stockfish installé par npm
-      const nodeModulesPath = path.resolve(__dirname, '../node_modules');
-      
-      // Vérifier si le module stockfish.js possède un binaire
-      const possibleBinaryPaths = [
-        path.join(nodeModulesPath, 'stockfish.js', 'bin', 'stockfish'),
-        path.join(nodeModulesPath, 'stockfish.js', 'stockfish')
-      ];
-
-      // Chercher Stockfish dans le PATH
+      const isMac = process.platform === 'darwin';
       const isWindows = process.platform === 'win32';
-      const stockfishCommand = isWindows ? 'stockfish.exe' : 'stockfish';
       
-      // Tenter d'utiliser le binaire Stockfish s'il est installé sur le système
-      const localBinaryPath = path.join(__dirname, '../bin/stockfish');
+      if (isMac) {
+        this.stockfishPath = 'stockfish';
+        console.log('Environnement macOS détecté: utilisation de la commande stockfish du système');
+      } else {
+        const localBinaryPath = path.join(__dirname, '../bin/stockfish');
         if (fs.existsSync(localBinaryPath)) {
-        this.stockfishPath = localBinaryPath;
+          this.stockfishPath = localBinaryPath;
+          console.log(`Utilisation du binaire local Stockfish: ${this.stockfishPath}`);
         } else {
-        this.stockfishPath = stockfishCommand;
+          const stockfishCommand = isWindows ? 'stockfish.exe' : 'stockfish';
+          this.stockfishPath = stockfishCommand;
+          console.log(`Binaire local non trouvé, utilisation de: ${this.stockfishPath}`);
         }
+      }
 
-      console.log(`Tentative d'exécution de Stockfish: ${this.stockfishPath}`);
+      console.log(`Lancement du processus Stockfish: ${this.stockfishPath}`);
       
-      // Lancer le processus avec des options pour limiter les ressources
       this.process = spawn(this.stockfishPath, [], {
-        // Ajouter un timeout en ms pour tuer le processus s'il ne répond pas
         timeout: 60000
       });
       
-      // Gérer les erreurs du processus
       this.process.on('error', (error) => {
         console.error('Erreur du processus Stockfish:', error);
         this.process = null;
       });
       
-      // Limiter la taille des buffers pour éviter les blocages
       this.process.stdout.setEncoding('utf8');
-      // Configurer des timeouts de lecture si nécessaire
       this.process.stdout.setTimeout(10000);
       
-      // Vérifier si le processus a démarré
       if (!this.process || !this.process.pid) {
         throw new Error('Impossible de lancer le processus Stockfish');
       }
       
-      // Gérer la sortie du processus
       this.process.stdout.on('data', (data) => {
         const str = data.toString();
         this.buffer += str;
         
-        // Traiter les lignes complètes
         const lines = this.buffer.split('\n');
-        this.buffer = lines.pop(); // Garder la dernière ligne incomplète
+        this.buffer = lines.pop();
         
         for (const line of lines) {
           this.handleEngineOutput(line.trim());
@@ -97,13 +84,11 @@ class ChessEngine {
         this.process = null;
       });
       
-      // Initialiser le moteur
       this.sendCommand('uci');
       this.sendCommand('isready');
       
       console.log('Moteur d\'échecs initialisé avec succès');
       
-      // Démarrer le watchdog
       this.startWatchdog();
     } catch (error) {
       console.error('Erreur lors de l\'initialisation du moteur d\'échecs:', error);
@@ -111,7 +96,6 @@ class ChessEngine {
     }
   }
   
-  // Démarrer le watchdog
   startWatchdog() {
     if (this.watchdogInterval) {
       clearInterval(this.watchdogInterval);
@@ -120,16 +104,13 @@ class ChessEngine {
     this.lastActivityTime = Date.now();
     
     this.watchdogInterval = setInterval(() => {
-      // Vérifier si le moteur a été actif dans les 2 minutes
       const inactiveTime = Date.now() - this.lastActivityTime;
       
       if (inactiveTime > 120000 && this.currentAnalysis) {
         console.warn(`Moteur inactif depuis ${inactiveTime/1000} secondes avec une analyse en cours`);
         
-        // Tenter d'arrêter l'analyse
         this.sendCommand('stop');
         
-        // Si toujours bloqué après 5 secondes, réinitialiser
         setTimeout(() => {
           if (this.currentAnalysis) {
             console.error('Réinitialisation du moteur après blocage');
@@ -137,16 +118,14 @@ class ChessEngine {
           }
         }, 5000);
       }
-    }, 30000); // Vérifier toutes les 30 secondes
+    }, 30000);
   }
   
-  // Mettre à jour l'horodatage d'activité
   updateActivity() {
     this.lastActivityTime = Date.now();
   }
   
   handleEngineOutput(line) {
-    // Mettre à jour l'horodatage d'activité
     this.updateActivity();
     
     console.log('← Moteur:', line);
@@ -158,31 +137,38 @@ class ChessEngine {
     if (this.currentAnalysis) {
       const { progress, completeCallback } = this.currentAnalysis;
       
-      // Message "bestmove" indique la fin de l'analyse
       if (line.startsWith('bestmove')) {
         const bestMove = line.split(' ')[1];
         if (completeCallback) {
           completeCallback(bestMove);
         }
       }
-      // Les messages "info" contiennent les analyses en cours
       else if (line.startsWith('info') && progress) {
-        // Extraire l'évaluation et la profondeur
         let evaluation = null;
         let depth = null;
+        let multipvIndex = 0;
+        let pv = null;
         
         const depthMatch = line.match(/depth (\d+)/);
         if (depthMatch) {
           depth = parseInt(depthMatch[1]);
         }
         
-        // Score en centipawns
+        const multipvMatch = line.match(/multipv (\d+)/);
+        if (multipvMatch) {
+          multipvIndex = parseInt(multipvMatch[1]);
+        }
+        
+        const pvMatch = line.match(/pv ([a-h][1-8][a-h][1-8].*?)($| (?:bmc|depth|multipv|score|nodes|nps|tbhits|time))/);
+        if (pvMatch) {
+          pv = pvMatch[1];
+        }
+        
         const cpMatch = line.match(/score cp (-?\d+)/);
         if (cpMatch) {
           evaluation = parseInt(cpMatch[1]) / 100;
         }
         
-        // Score mat
         const mateMatch = line.match(/score mate (-?\d+)/);
         if (mateMatch) {
           const mateIn = parseInt(mateMatch[1]);
@@ -193,6 +179,8 @@ class ChessEngine {
           progress({
             depth,
             evaluation,
+            multipv: multipvIndex,
+            pv: pv
           });
         }
       }
@@ -200,7 +188,6 @@ class ChessEngine {
   }
 
   sendCommand(command) {
-    // Mettre à jour l'horodatage d'activité
     this.updateActivity();
     
     if (!this.process) {
@@ -214,10 +201,8 @@ class ChessEngine {
 
   analyzePosition(fen, options = {}) {
     return new Promise((resolve, reject) => {
-      // Créer une tâche d'analyse
       const task = {
         execute: () => {
-          // Implémentation actuelle de l'analyse
           return new Promise((taskResolve) => {
             if (!this.process) {
               this.initialize();
@@ -229,23 +214,21 @@ class ChessEngine {
             
             const depth = options.depth || 15;
             const moveTime = options.moveTime || 1000;
+            const multipv = options.multipv || 1;
             
             let bestMove = null;
             let lastEvaluation = null;
             const analysisData = [];
+            const bestMoves = [];
             
-            // Ajouter un drapeau pour savoir si l'analyse est terminée
             let analysisCompleted = false;
             
-            // Commencer une analyse avec un timeout de sécurité plus robuste
             const timeoutId = setTimeout(() => {
               if (!analysisCompleted) {
                 console.warn('Analyse bloquée, arrêt forcé');
                 
-                // Tenter d'envoyer la commande d'arrêt
                 this.sendCommand('stop');
                 
-                // Attendre un peu, puis réinitialiser si nécessaire
                 setTimeout(() => {
                   if (this.currentAnalysis) {
                     console.error('Le moteur ne répond pas, réinitialisation');
@@ -255,21 +238,31 @@ class ChessEngine {
                     taskResolve({
                       bestMove: null,
                       evaluation: 0,
-                      timeout: true,
-                      error: 'Timeout d\'analyse'
+                      bestMoves: [],
+                      timeout: true
                     });
                   }
                 }, 2000);
               }
-            }, options.moveTime + 5000); // Un timeout plus long que le temps d'analyse prévu
+            }, options.moveTime + 5000);
             
             this.currentAnalysis = {
               progress: (data) => {
-                lastEvaluation = data.evaluation;
+                const multipvIndex = data.multipv ? data.multipv - 1 : 0;
+                
+                if (multipvIndex === 0) {
+                  lastEvaluation = data.evaluation;
+                }
+                
+                bestMoves[multipvIndex] = {
+                  move: data.pv ? data.pv.split(' ')[0] : null,
+                  evaluation: data.evaluation
+                };
+                
                 analysisData.push(data);
                 
                 if (options.onProgress) {
-                  options.onProgress(data);
+                  options.onProgress({...data, bestMoves});
                 }
               },
               completeCallback: (move) => {
@@ -280,36 +273,22 @@ class ChessEngine {
                 taskResolve({
                   bestMove,
                   evaluation: lastEvaluation,
+                  bestMoves: bestMoves.filter(Boolean),
                   analysisData
                 });
               }
             };
             
-            // Configurer le moteur et lancer l'analyse
+            this.sendCommand('setoption name MultiPV value ' + multipv);
             this.sendCommand('ucinewgame');
             this.sendCommand(`position fen ${fen}`);
             this.sendCommand(`go depth ${depth} movetime ${moveTime}`);
-            
-            // Ajouter un timeout de sécurité
-            setTimeout(() => {
-              if (this.currentAnalysis) {
-                this.sendCommand('stop');
-                this.currentAnalysis = null;
-                taskResolve({
-                  bestMove,
-                  evaluation: lastEvaluation,
-                  analysisData,
-                  timeout: true
-                });
-              }
-            }, moveTime + 1000);
           });
         },
         resolve,
         reject
       };
       
-      // Ajouter à la file d'attente
       this.queueAnalysis(task);
     });
   }
@@ -324,37 +303,27 @@ class ChessEngine {
         
         console.log("Tentative de chargement du PGN");
         
-        // Déterminer la méthode à utiliser
         const loadMethod = typeof chess.loadPgn === 'function' ? 'loadPgn' : 
                            typeof chess.load_pgn === 'function' ? 'load_pgn' : null;
         
         if (!loadMethod) {
-          console.error("Aucune méthode de chargement PGN trouvée");
-          return reject(new Error('Méthode de chargement PGN non disponible'));
+          return reject(new Error('Aucune méthode de chargement PGN disponible dans chess.js'));
         }
         
-        // Tenter de charger le PGN
         try {
-          console.log(`Utilisation de la méthode ${loadMethod}`);
           chess[loadMethod](pgn);
-          console.log("PGN chargé avec succès");
         } catch (e) {
-          console.error("Erreur lors du chargement du PGN:", e);
-          return reject(new Error(`Erreur lors du chargement PGN: ${e.message}`));
+          return reject(new Error(`PGN invalide: ${e.message}`));
         }
         
-        // Obtenir l'historique des coups
         const history = chess.history({ verbose: true });
         console.log("Nombre de coups extraits:", history.length);
         
-        // Réinitialiser pour l'analyse
         chess.reset();
         const analysisResults = [];
         
-        // Valider le PGN avant l'analyse
         let validPgn;
         try {
-          // Nettoyer le PGN des caractères spéciaux problématiques
           validPgn = pgn.replace(/[\r\n\t]+/g, ' ')
                        .replace(/\s{2,}/g, ' ')
                        .trim();
@@ -362,30 +331,25 @@ class ChessEngine {
           return reject(new Error(`PGN invalide: ${e.message}`));
         }
         
-        // Limiter le nombre de coups analysés pour éviter les blocages
         const maxMoves = options.maxMoves || 50;
         
-        // Analyse coup par coup avec plus de sécurité
         for (let i = 0; i < Math.min(history.length, maxMoves); i++) {
           console.log(`Analyse du coup ${i+1}/${history.length}`);
           
           try {
-            // Jouer le coup
             chess.move(history[i]);
             
-            // Obtenir la position
             const fen = chess.fen();
             const turn = chess.turn();
             const moveNumber = Math.floor(i / 2) + 1;
             const isWhite = turn === 'w';
             
-            // Analyser
             const positionAnalysis = await Promise.race([
               this.analyzePosition(fen, {
                 depth: options.depth || 12,
-                moveTime: options.moveTime || 500
+                moveTime: options.moveTime || 500,
+                multipv: 3
               }),
-              // Timeout individuel pour chaque analyse de position
               new Promise((_, timeoutReject) => 
                 setTimeout(() => timeoutReject(new Error('Timeout d\'analyse de position')), 
                           (options.moveTime || 500) + 3000)
@@ -394,17 +358,16 @@ class ChessEngine {
             
             console.log(`Coup ${i+1} analysé, évaluation:`, positionAnalysis.evaluation);
             
-            // Stocker le résultat
             analysisResults.push({
               fen,
               move: history[i].san,
               moveNumber,
               isWhite,
               bestMove: positionAnalysis.bestMove,
-              evaluation: positionAnalysis.evaluation
+              evaluation: positionAnalysis.evaluation,
+              bestMoves: positionAnalysis.bestMoves || []
             });
             
-            // Mise à jour progress
             if (options.onProgress) {
               options.onProgress({
                 currentMove: i + 1,
@@ -414,9 +377,8 @@ class ChessEngine {
             }
           } catch (posError) {
             console.error(`Erreur lors de l'analyse de la position ${i+1}:`, posError);
-            // Continuer avec la position suivante au lieu d'échouer complètement
             analysisResults.push({
-              fen,
+              fen: chess.fen(),
               move: history[i].san,
               moveNumber: Math.floor(i / 2) + 1,
               isWhite: chess.turn() === 'w',
@@ -428,7 +390,10 @@ class ChessEngine {
         }
         
         console.log("Analyse PGN terminée, résultats:", analysisResults.length);
-        resolve(analysisResults);
+        resolve({
+          success: true,
+          analysis: analysisResults
+        });
       } catch (error) {
         console.error("Erreur générale durant l'analyse PGN:", error);
         reject(error);
@@ -444,7 +409,6 @@ class ChessEngine {
     
     if (this.process) {
       this.sendCommand('quit');
-      // Attendre un peu puis forcer l'arrêt si nécessaire
       setTimeout(() => {
         if (this.process) {
           this.process.kill();
@@ -456,24 +420,20 @@ class ChessEngine {
     }
   }
 
-  // Ajouter une méthode pour réinitialiser le moteur en cas de blocage
   resetEngine() {
     console.log('Réinitialisation du moteur d\'échecs...');
     this.shutDown();
     
-    // Petit délai pour s'assurer que tout est nettoyé
     setTimeout(() => {
       this.initialize();
     }, 500);
   }
 
-  // Méthode pour ajouter une analyse à la file d'attente
   queueAnalysis(task) {
     this.analysisQueue.push(task);
     this.processQueue();
   }
   
-  // Méthode pour traiter la file d'attente
   async processQueue() {
     if (this.isProcessingQueue || this.analysisQueue.length === 0) {
       return;
@@ -485,16 +445,12 @@ class ChessEngine {
       const task = this.analysisQueue.shift();
       
       try {
-        // Exécuter l'analyse
         const result = await task.execute();
-        // Appeler le callback avec le résultat
         task.resolve(result);
       } catch (error) {
-        // Gérer les erreurs
         console.error('Erreur dans la file d\'analyse:', error);
         task.reject(error);
         
-        // Réinitialiser le moteur en cas d'erreur
         this.resetEngine();
       }
     }
@@ -503,7 +459,6 @@ class ChessEngine {
   }
 }
 
-// Créer une instance unique
 const engineInstance = new ChessEngine();
-
+engineInstance.initialize();
 module.exports = engineInstance;
