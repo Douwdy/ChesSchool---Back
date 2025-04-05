@@ -293,6 +293,89 @@ class ChessEngine {
     });
   }
 
+  // Méthode pour analyser un coup spécifique
+  analyzeSpecificMove(fen, move, options = {}) {
+    return new Promise((resolve, reject) => {
+      const task = {
+        execute: () => {
+          return new Promise((taskResolve) => {
+            if (!this.process) {
+              this.initialize();
+            }
+            
+            if (!this.process) {
+              return reject(new Error('Impossible d\'initialiser le moteur d\'échecs'));
+            }
+            
+            const depth = options.depth || 15;
+            const moveTime = options.moveTime || 1000;
+            
+            let moveEvaluation = null;
+            let analysisData = [];
+            let analysisCompleted = false;
+            
+            const timeoutId = setTimeout(() => {
+              if (!analysisCompleted) {
+                console.warn('Analyse de coup spécifique bloquée, arrêt forcé');
+                this.sendCommand('stop');
+                
+                setTimeout(() => {
+                  if (this.currentAnalysis) {
+                    console.error('Réinitialisation après timeout d\'analyse de coup');
+                    this.resetEngine();
+                    this.currentAnalysis = null;
+                    taskResolve({ evaluation: 0, analysisData });
+                  }
+                }, 2000);
+              }
+            }, options.moveTime + 5000);
+            
+            this.currentAnalysis = {
+              progress: (data) => {
+                if (data.evaluation !== undefined) {
+                  moveEvaluation = data.evaluation;
+                }
+                analysisData.push(data);
+                
+                if (options.onProgress) {
+                  options.onProgress(data);
+                }
+              },
+              completeCallback: () => {
+                analysisCompleted = true;
+                clearTimeout(timeoutId);
+                this.currentAnalysis = null;
+                taskResolve({
+                  evaluation: moveEvaluation,
+                  analysisData
+                });
+              }
+            };
+            
+            // Configuration pour évaluer un coup spécifique
+            this.sendCommand('ucinewgame');
+            this.sendCommand(`position fen ${fen}`);
+            this.sendCommand(`go depth ${depth} movetime ${moveTime} searchmoves ${move}`);
+          });
+        },
+        resolve,
+        reject
+      };
+      
+      this.queueAnalysis(task);
+    });
+  }
+
+  // Méthode pour évaluer la qualité d'un coup
+  evaluateMoveQuality(difference) {
+    if (difference <= 30) return "excellent";
+    if (difference <= 90) return "good";
+    if (difference <= 200) return "inaccuracy";
+    if (difference <= 500) return "mistake";
+    return "blunder";
+  }
+
+  // Méthode modifiée pour analyser une position PGN
   analyzePGN(pgn, options = {}) {
     return new Promise(async (resolve, reject) => {
       try {
@@ -331,21 +414,27 @@ class ChessEngine {
           return reject(new Error(`PGN invalide: ${e.message}`));
         }
         
-        const maxMoves = options.maxMoves || 50;
+        const maxMoves = options.maxMoves || 150;
         
         for (let i = 0; i < Math.min(history.length, maxMoves); i++) {
           console.log(`Analyse du coup ${i+1}/${history.length}`);
           
           try {
-            chess.move(history[i]);
+            // Position avant le coup
+            const fenBeforeMove = chess.fen();
+            
+            // Jouer le coup
+            const moveObj = history[i];
+            chess.move(moveObj);
             
             const fen = chess.fen();
             const turn = chess.turn();
             const moveNumber = Math.floor(i / 2) + 1;
-            const isWhite = turn === 'w';
+            const isWhite = i % 2 === 0; // Les coups pairs sont blancs
             
-            const positionAnalysis = await Promise.race([
-              this.analyzePosition(fen, {
+            // 1. Analyser la position avant le coup pour trouver le meilleur coup
+            const bestMoveAnalysis = await Promise.race([
+              this.analyzePosition(fenBeforeMove, {
                 depth: options.depth || 12,
                 moveTime: options.moveTime || 500,
                 multipv: 3
@@ -356,16 +445,52 @@ class ChessEngine {
               )
             ]);
             
-            console.log(`Coup ${i+1} analysé, évaluation:`, positionAnalysis.evaluation);
+            // Extraire le meilleur coup et son évaluation
+            const bestMove = bestMoveAnalysis.bestMove;
+            const bestMoveEval = bestMoveAnalysis.evaluation;
+            
+            // 2. Évaluer le coup qui a été joué
+            const actualMoveAnalysis = await Promise.race([
+              this.analyzeSpecificMove(fenBeforeMove, `${moveObj.from}${moveObj.to}`, {
+                depth: options.depth || 12,
+                moveTime: options.moveTime || 500
+              }),
+              new Promise((_, timeoutReject) => 
+                setTimeout(() => timeoutReject(new Error('Timeout d\'analyse du coup joué')), 
+                          (options.moveTime || 500) + 3000)
+              )
+            ]);
+            
+            const playedMoveEval = actualMoveAnalysis.evaluation;
+            
+            // 3. Calculer la différence entre les évaluations
+            // La différence est toujours positive et représente combien de centipions sont "perdus"
+            const evalDifference = Math.abs(
+              typeof bestMoveEval === 'string' && bestMoveEval.startsWith('#') ? 
+                1000 : // Mat considéré comme +10
+                (typeof playedMoveEval === 'string' && playedMoveEval.startsWith('#') ?
+                  1000 : // Mat considéré comme +10
+                  Math.abs(parseFloat(bestMoveEval) - parseFloat(playedMoveEval)) * 100 // Conversion en centipions
+                )
+            );
+            
+            // 4. Déterminer la qualité du coup
+            const moveQuality = this.evaluateMoveQuality(evalDifference);
+            
+            console.log(`Coup ${i+1} analysé - Meilleur: ${bestMove} (${bestMoveEval}) vs Joué: ${moveObj.san} (${playedMoveEval}) - Différence: ${evalDifference} - Qualité: ${moveQuality}`);
             
             analysisResults.push({
               fen,
-              move: history[i].san,
+              move: moveObj.san,
               moveNumber,
               isWhite,
-              bestMove: positionAnalysis.bestMove,
-              evaluation: positionAnalysis.evaluation,
-              bestMoves: positionAnalysis.bestMoves || []
+              bestMove,
+              bestMoveEval,
+              playedMoveEval,
+              evalDifference,
+              moveQuality,
+              evaluation: playedMoveEval, // pour maintenir la compatibilité
+              bestMoves: bestMoveAnalysis.bestMoves || []
             });
             
             if (options.onProgress) {
@@ -381,9 +506,10 @@ class ChessEngine {
               fen: chess.fen(),
               move: history[i].san,
               moveNumber: Math.floor(i / 2) + 1,
-              isWhite: chess.turn() === 'w',
+              isWhite: i % 2 === 0,
               bestMove: null,
               evaluation: null,
+              moveQuality: "unknown",
               error: posError.message
             });
           }

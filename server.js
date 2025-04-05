@@ -160,6 +160,11 @@ app.post('/api/analyze-game', async (req, res) => {
             bestMove: result.bestMove,
             evaluation: result.evaluation,
             bestMoves: result.bestMoves || [],  // Inclure les meilleures variantes
+            // Ajout des nouveaux champs
+            bestMoveEval: result.bestMoveEval,
+            playedMoveEval: result.playedMoveEval,
+            evalDifference: result.evalDifference,
+            moveQuality: result.moveQuality,
             index: index
         }));
         
