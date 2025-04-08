@@ -1,0 +1,125 @@
+body {
+    font-family: 'Helvetica', 'Arial', sans-serif;
+    margin: 0;
+    padding: 0;
+    line-height: 1.5;
+    color: #bd7421;
+  }
+  
+  h1 {
+    color: #bd7421;
+    border-bottom: 2px solid #cec700;
+    padding-bottom: 0.5em;
+    font-size: 2rem;
+    text-align: center;
+  } 
+  
+  h2 {
+    color: #bd7421;
+    border-bottom: 1px solid #ffc759;
+    padding-top: 0.5em;
+    margin-top: 1.5em;
+  }
+  
+  h3 {
+    color: #9d9645;
+    margin-top: 1.2em;
+  }
+  
+  a {
+    color: #ffc759;
+    text-decoration: none;
+  }
+  
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1em 0;
+  }
+  
+  table th, table td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+  }
+  
+  table th {
+    background-color: #f9faee;
+  }
+  
+  .header {
+    background-color: #ffe4ae;
+    color: #bd7421;
+    padding: 20px;
+    text-align: center;
+    margin-bottom: 2em;
+  }
+
+  .logo {
+    max-width: 150px;
+    margin: 0 auto 15px auto;
+    display: block;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  
+  .excellent { color: #2ad45b; }
+  .good { color: #85c0f9; }
+  .inaccuracy { color: #f5cc7f; }
+  .mistake { color: #f7936f; }
+  .blunder { color: #e66952; }
+  
+  img {
+    max-width: 280px;
+    display: block;
+    margin: 0 auto;
+    border: 1px solid #ddd;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+  
+  .player-stats {
+    display: flex;
+    justify-content: space-between;
+    margin: 1em 0;
+    padding: 0.5em;
+    background-color: #f1faee;
+    border-radius: 4px;
+  }
+  
+  .page-break {
+    page-break-after: always;
+  }
+  
+  @media print {
+    @page {
+      margin: 2cm;
+    }
+    
+    body {
+      font-size: 11pt;
+    }
+    
+    h1 {
+      font-size: 18pt;
+    }
+    
+    h2 {
+      font-size: 14pt;
+    }
+  }
+
+.last-move {
+  background-color: #f1faee;
+  border-left: 3px solid #457b9d;
+  padding: 10px;
+  margin-bottom: 15px;
+  font-weight: bold;
+}
+
+img {
+  max-width: 280px;
+  display: block;
+  margin: 0 auto;
+  border: 1px solid #ddd;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}

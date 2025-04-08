@@ -4,3 +4,4 @@ data/lichess_db_puzzle.csv
 import_csv_to_sqlite.js
 output.txt
 test.js
+/temp/*

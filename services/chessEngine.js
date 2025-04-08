@@ -1,5 +1,4 @@
 const { spawn } = require('child_process');
-const { Chess } = require('chess.js');
 const path = require('path');
 const fs = require('fs');
 
@@ -367,7 +366,15 @@ class ChessEngine {
   }
 
   // Méthode pour évaluer la qualité d'un coup
-  evaluateMoveQuality(difference) {
+  evaluateMoveQuality(difference, isMatePosition) {
+    // Cas spécial: dans les positions de mat
+    if (isMatePosition) {
+      // Si la différence est très petite, c'est qu'on reste sur le chemin du mat
+      if (difference < 50) return "excellent";
+      return "blunder"; // Rater un mat est toujours une bévue
+    }
+    
+    // Échelle normale
     if (difference <= 30) return "excellent";
     if (difference <= 90) return "good";
     if (difference <= 200) return "inaccuracy";
@@ -449,6 +456,29 @@ class ChessEngine {
             const bestMove = bestMoveAnalysis.bestMove;
             const bestMoveEval = bestMoveAnalysis.evaluation;
             
+            // Transformer les coups UCI en notation SAN
+            const bestMoves = (bestMoveAnalysis.bestMoves || []).map(moveData => {
+              try {
+                if (moveData.move) {
+                  const from = moveData.move.substring(0, 2);
+                  const to = moveData.move.substring(2, 4);
+                  const promotion = moveData.move.length > 4 ? moveData.move[4] : undefined;
+                  
+                  const tmpChess = new Chess(fenBeforeMove);
+                  const move = tmpChess.move({ from, to, promotion });
+                  
+                  return {
+                    ...moveData,
+                    san: move ? move.san : moveData.move
+                  };
+                }
+                return moveData;
+              } catch (e) {
+                console.error("Erreur de conversion de coup:", e);
+                return moveData;
+              }
+            });
+            
             // 2. Évaluer le coup qui a été joué
             const actualMoveAnalysis = await Promise.race([
               this.analyzeSpecificMove(fenBeforeMove, `${moveObj.from}${moveObj.to}`, {
@@ -464,15 +494,45 @@ class ChessEngine {
             const playedMoveEval = actualMoveAnalysis.evaluation;
             
             // 3. Calculer la différence entre les évaluations
-            // La différence est toujours positive et représente combien de centipions sont "perdus"
-            const evalDifference = Math.abs(
-              typeof bestMoveEval === 'string' && bestMoveEval.startsWith('#') ? 
-                1000 : // Mat considéré comme +10
-                (typeof playedMoveEval === 'string' && playedMoveEval.startsWith('#') ?
-                  1000 : // Mat considéré comme +10
-                  Math.abs(parseFloat(bestMoveEval) - parseFloat(playedMoveEval)) * 100 // Conversion en centipions
-                )
-            );
+            // Fonction améliorée pour calculer la différence
+            const calculateEvalDifference = (bestEval, playedEval) => {
+              // Cas des mats
+              if (typeof bestEval === 'string' && bestEval.startsWith('#')) {
+                const bestMateIn = parseInt(bestEval.substring(1));
+                
+                if (typeof playedEval === 'string' && playedEval.startsWith('#')) {
+                  const playedMateIn = parseInt(playedEval.substring(1));
+                  
+                  // Comparaison de deux mats
+                  if ((bestMateIn > 0 && playedMateIn > 0) || (bestMateIn < 0 && playedMateIn < 0)) {
+                    // Même signe, comparer les distances
+                    return Math.abs(Math.abs(bestMateIn) - Math.abs(playedMateIn)) * 50;
+                  } else {
+                    // Signes différents: énorme différence
+                    return 1000;
+                  }
+                } else {
+                  // Comparer un mat avec une évaluation numérique
+                  return bestMateIn > 0 ? 800 : 10; // Perdre un mat ou éviter un mat
+                }
+              } else if (typeof playedEval === 'string' && playedEval.startsWith('#')) {
+                const playedMateIn = parseInt(playedEval.substring(1));
+                // Le coup joué mène à un mat que le meilleur coup ne voyait pas
+                return playedMateIn > 0 ? 0 : 800; // Excellent si on trouve un mat, mauvais si on se fait mater
+              } else {
+                // Calcul standard pour les évaluations numériques
+                const numericBest = parseFloat(bestEval);
+                const numericPlayed = parseFloat(playedEval);
+                
+                if (!isNaN(numericBest) && !isNaN(numericPlayed)) {
+                  return Math.abs(numericBest - numericPlayed) * 100; // Conversion en centipions
+                }
+                
+                return 0; // Par défaut
+              }
+            };
+
+            const evalDifference = calculateEvalDifference(bestMoveEval, playedMoveEval);
             
             // 4. Déterminer la qualité du coup
             const moveQuality = this.evaluateMoveQuality(evalDifference);
@@ -490,7 +550,7 @@ class ChessEngine {
               evalDifference,
               moveQuality,
               evaluation: playedMoveEval, // pour maintenir la compatibilité
-              bestMoves: bestMoveAnalysis.bestMoves || []
+              bestMoves: bestMoves || []
             });
             
             if (options.onProgress) {
@@ -516,10 +576,38 @@ class ChessEngine {
         }
         
         console.log("Analyse PGN terminée, résultats:", analysisResults.length);
-        resolve({
-          success: true,
-          analysis: analysisResults
-        });
+        
+        // Détecter les séquences de mat
+        const detectMateSequence = (results, startIndex) => {
+          // Parcourir les positions à partir de la position actuelle
+          for (let i = startIndex; i < results.length; i++) {
+            if (results[i].evaluation && typeof results[i].evaluation === 'string' && 
+                results[i].evaluation.startsWith('#')) {
+              // Marquer cette position et les précédentes comme faisant partie d'une séquence de mat
+              results[i].isInMateSequence = true;
+              
+              // Remonter pour ajuster les qualités des coups précédents
+              if (i > 0) results[i-1].isInMateSequence = true;
+            }
+          }
+        };
+        
+        // Appliquer la détection après l'analyse complète
+        detectMateSequence(analysisResults, 0);
+        
+        // Ajuster les qualités des coups dans les séquences de mat
+        for (let i = 0; i < analysisResults.length; i++) {
+          if (analysisResults[i].isInMateSequence) {
+            // Recalculer la qualité avec le flag de séquence de mat
+            analysisResults[i].moveQuality = this.evaluateMoveQuality(
+              analysisResults[i].evalDifference, 
+              true // Indiquer qu'on est dans une séquence de mat
+            );
+          }
+        }
+        
+        // Changer ici pour retourner directement le tableau d'analyse au lieu de l'objet
+        resolve(analysisResults);
       } catch (error) {
         console.error("Erreur générale durant l'analyse PGN:", error);
         reject(error);
@@ -527,32 +615,22 @@ class ChessEngine {
     });
   }
 
-  shutDown() {
-    if (this.watchdogInterval) {
-      clearInterval(this.watchdogInterval);
-      this.watchdogInterval = null;
-    }
+  // Amélioration de la gestion des analyses multiples
+  async analyzePositionWithAlternatives(fen, options = {}) {
+    const multipv = options.multipv || 3;  // Nombre d'alternatives à analyser
     
-    if (this.process) {
-      this.sendCommand('quit');
-      setTimeout(() => {
-        if (this.process) {
-          this.process.kill();
-          this.process = null;
+    return this.analyzePosition(fen, {
+      ...options,
+      multipv: multipv,
+      onProgress: (data) => {
+        if (options.onProgress) {
+          options.onProgress({
+            ...data,
+            alternatives: data.bestMoves || []
+          });
         }
-      }, 500);
-      this.isReady = false;
-      console.log('Moteur d\'échecs arrêté');
-    }
-  }
-
-  resetEngine() {
-    console.log('Réinitialisation du moteur d\'échecs...');
-    this.shutDown();
-    
-    setTimeout(() => {
-      this.initialize();
-    }, 500);
+      }
+    });
   }
 
   queueAnalysis(task) {

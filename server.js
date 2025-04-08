@@ -5,6 +5,8 @@ const chessEngine = require('./services/chessEngine');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const markdownpdf = require('markdown-pdf');
+const os = require('os');
 
 const app = express();
 const PORT = 5001;
@@ -112,73 +114,79 @@ app.get('/api/analysis-status', (req, res) => {
   });
 });
 
+// Ajouter une configuration pour limiter les timeouts
+const ANALYSIS_TIMEOUT = 60000; // 1 minute
+const MAX_MOVES_TO_ANALYZE = 150; // Limiter le nombre de coups à analyser
+
 app.post('/api/analyze-game', async (req, res) => {
-    const { pgn, depth, moveTime } = req.body;
+  const { pgn, options } = req.body;
+  
+  if (!pgn) {
+    return res.status(400).json({ error: 'PGN requis' });
+  }
+  
+  try {
+    // Configuration pour les analyses longues
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Timeout d\'analyse global')), ANALYSIS_TIMEOUT)
+    );
     
-    if (!pgn) {
-        return res.status(400).json({ 
-            success: false,
-            error: 'PGN requis' 
-        });
-    }
-    
-    try {
-        console.log("Analyse PGN reçue, longueur:", pgn.length);
-        
-        const results = await chessEngine.analyzePGN(pgn, {
-            depth: depth || 12,
-            moveTime: moveTime || 500,
-            onProgress: (data) => {
-                if (global.sseClients) {
-                    const progressData = {
-                        status: 'analyzing', 
-                        currentMove: data.currentMove,
-                        totalMoves: data.totalMoves,
-                        progress: Math.floor((data.currentMove / data.totalMoves) * 100)
-                    };
-                    
-                    global.sseClients.forEach(sendUpdate => {
-                        sendUpdate(progressData);
-                    });
-                }
-                console.log(`Progression: ${data.currentMove}/${data.totalMoves}`);
-            }
-        });
-        
-        console.log("Analyse terminée, nombre de positions:", results.analysis?.length || 0);
-        
-        if (!results.analysis) {
-            throw new Error('Résultat d\'analyse incorrect');
+    // Lancer l'analyse avec une limite de temps
+    const analysisPromise = chessEngine.analyzePGN(pgn, {
+      depth: options?.depth || 12,
+      moveTime: options?.moveTime || 500,
+      maxMoves: MAX_MOVES_TO_ANALYZE,
+      onProgress: (data) => {
+        if (global.sseClients && global.sseClients.size > 0) {
+          // Mettre à jour les clients connectés
+          global.sseClients.forEach(sendUpdate => {
+            sendUpdate({
+              status: 'analyzing',
+              currentMove: data.currentMove,
+              totalMoves: data.totalMoves,
+              progress: Math.floor((data.currentMove / data.totalMoves) * 100)
+            });
+          });
         }
-        
-        // Inclure bestMoves dans les résultats formatés
-        const formattedResults = results.analysis.map((result, index) => ({
-            fen: result.fen,
-            move: result.move,
-            moveNumber: result.moveNumber,
-            isWhite: result.isWhite,
-            bestMove: result.bestMove,
-            evaluation: result.evaluation,
-            bestMoves: result.bestMoves || [],  // Inclure les meilleures variantes
-            // Ajout des nouveaux champs
-            bestMoveEval: result.bestMoveEval,
-            playedMoveEval: result.playedMoveEval,
-            evalDifference: result.evalDifference,
-            moveQuality: result.moveQuality,
-            index: index
-        }));
-        
-        res.json({
-            success: true,
-            analysis: formattedResults
+      }
+    });
+    
+    // Utiliser le premier résultat - soit l'analyse, soit le timeout
+    const results = await Promise.race([analysisPromise, timeoutPromise]);
+    
+    // Répondre avec les résultats
+    res.json({
+      success: true,
+      analysis: results // Results est maintenant directement le tableau d'analyse
+    });
+  } catch (error) {
+    console.error('Erreur lors de l\'analyse du PGN:', error);
+    
+    // Informer les clients que l'analyse a échoué
+    if (global.sseClients && global.sseClients.size > 0) {
+      global.sseClients.forEach(sendUpdate => {
+        sendUpdate({
+          status: 'error',
+          message: error.message
         });
-    } catch (error) {
-        console.error('Erreur lors de l\'analyse du PGN:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'Erreur lors de l\'analyse du PGN: ' + error.message 
-        });
+      });
     }
+    
+    // Si le moteur s'est arrêté, essayez de le redémarrer
+    if (error.message.includes('terminated') || !chessEngine.isReady) {
+      const now = Date.now();
+      if (now - lastEngineRestart > MIN_RESTART_INTERVAL) {
+        console.log('Redémarrage du moteur après échec');
+        chessEngine.resetEngine();
+        lastEngineRestart = now;
+      }
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de l\'analyse: ' + error.message
+    });
+  }
 });
 
 let lastEngineRestart = Date.now();
@@ -255,3 +263,96 @@ try {
         console.log(`Serveur backend démarré sur http://localhost:${PORT}`);
     });
 }
+
+// Créez un dossier temporaire s'il n'existe pas déjà
+const tempDir = path.join(__dirname, 'temp');
+if (!fs.existsSync(tempDir)) {
+  fs.mkdirSync(tempDir, { recursive: true });
+}
+
+// Ajoutez cette nouvelle route
+app.post('/api/markdown-to-pdf', async (req, res) => {
+  const { markdown } = req.body;
+  
+  if (!markdown) {
+    return res.status(400).json({ error: 'Markdown requis' });
+  }
+  
+  try {
+    const timestamp = Date.now();
+    const randomString = Math.random().toString(36).substring(2, 10);
+    const reportId = `report-${timestamp}-${randomString}`;
+    
+    // Chemin des fichiers temporaires
+    const mdFilePath = path.join(tempDir, `${reportId}.md`);
+    const pdfFilePath = path.join(tempDir, `${reportId}.pdf`);
+    
+    // Écrire le markdown dans un fichier temporaire
+    fs.writeFileSync(mdFilePath, markdown);
+    
+    // Options pour la conversion de markdown en PDF
+    const options = {
+      cssPath: path.join(__dirname, 'assets/report-style.css'),
+      remarkable: {
+        html: true,
+        breaks: true,
+        typographer: true
+      },
+      phantomPath: require('phantomjs-prebuilt').path,
+      // Ces options permettent le téléchargement d'images externes
+      runningsArgs: ['--ignore-ssl-errors=true', '--ssl-protocol=any', '--web-security=false']
+    };
+    
+    // Convertir le markdown en PDF
+    await new Promise((resolve, reject) => {
+      markdownpdf(options)
+        .from(mdFilePath)
+        .to(pdfFilePath, function(err) {
+          if (err) reject(err);
+          else resolve();
+        });
+    });
+    
+    // Supprimer le fichier markdown temporaire
+    fs.unlinkSync(mdFilePath);
+    
+    // Répondre avec l'URL pour télécharger le PDF
+    res.json({
+      success: true,
+      reportId: reportId,
+      downloadUrl: `/api/download-report/${reportId}`
+    });
+  } catch (error) {
+    console.error('Erreur lors de la conversion en PDF:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Erreur lors de la génération du PDF: ' + error.message 
+    });
+  }
+});
+
+// Route pour télécharger le rapport PDF
+app.get('/api/download-report/:reportId', (req, res) => {
+  const { reportId } = req.params;
+  const filePath = path.join(tempDir, `${reportId}.pdf`);
+  
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Rapport non trouvé' });
+  }
+  
+  res.download(filePath, `analyse-echecs-${Date.now()}.pdf`, (err) => {
+    if (err) {
+      console.error('Erreur lors du téléchargement:', err);
+      // On ne supprime pas le fichier en cas d'erreur pour pouvoir réessayer
+    } else {
+      // Suppression du fichier PDF après téléchargement réussi
+      setTimeout(() => {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (e) {
+          console.error('Erreur lors de la suppression du fichier PDF:', e);
+        }
+      }, 1000);
+    }
+  });
+});
